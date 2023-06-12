@@ -48,6 +48,7 @@ module coin_flip::coin_flip {
         id: UID,
         balance: Balance<SUI>,
         house: address,
+        owner: address,
         fee_data: FeeData,
     }
 
@@ -96,6 +97,10 @@ module coin_flip::coin_flip {
         house_data.house
     }
 
+    public fun owner(house_data: &HouseData): address {
+        house_data.owner
+    }
+
     public fun stake_amount(game: &Game): u64 {
         game.stake_amount
     }
@@ -139,6 +144,7 @@ module coin_flip::coin_flip {
             balance: coin::into_balance(coin),
             house: tx_context::sender(ctx),
             fee_data,
+            owner: tx_context::sender(ctx),
         };
 
         // initializer function that should only be called once and by the creator of the contract
@@ -157,14 +163,20 @@ module coin_flip::coin_flip {
     // House can withdraw the entire balance of the house
     public entry fun withdraw(house_data: &mut HouseData, ctx: &mut TxContext) {
         // only the house address can withdraw funds
-        assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
+        assert!(tx_context::sender(ctx) == house_data.house || tx_context::sender(ctx) == house_data.owner, ECallerNotHouse);
 
         let total_balance = balance::value(&house_data.balance);
         let coin = coin::take(&mut house_data.balance, total_balance, ctx);
-        transfer::public_transfer(coin, house_data.house);
+        transfer::public_transfer(coin, house_data.owner);
     }
 
-    // House can withdraw the entire balance of the house
+    public entry fun transfer_ownership(house_data: &mut HouseData, new_owner: address, ctx: &mut TxContext) {
+        // only the house address can withdraw funds
+        assert!(tx_context::sender(ctx) == house_data.house || tx_context::sender(ctx) == house_data.owner, ECallerNotHouse);
+
+        house_data.owner = new_owner;
+    }
+
     public entry fun validate(house_data: &mut HouseData, ctx: &mut TxContext) {
         // only the house address can withdraw funds
         assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
@@ -252,4 +264,123 @@ module coin_flip::coin_flip {
         transfer::share_object(new_game);
         transfer::share_object(outcome);
    }
+
+    // #[test]
+    // fun mock_play() {
+    //     use sui::test_scenario;
+    //     use std::debug;
+
+    //     let house = @0xCAFE;
+    //     let player = @0xDECAF;
+    //     let wallet1 = @0xabc1;
+    //     let wallet2 = @0xdef2;
+    //     let wallet3 = @0xbea3;
+
+    //     let scenario_val = test_scenario::begin(house);
+    //     let scenario = &mut scenario_val;
+    //     {
+    //         let ctx = test_scenario::ctx(scenario);
+    //         let coinA = coin::mint_for_testing<SUI>(100000000000, ctx);
+    //         let coinB = coin::mint_for_testing<SUI>(10000000000, ctx);
+    //         let coinC = coin::mint_for_testing<SUI>(10000000000, ctx);
+    //         transfer::public_transfer(coinA, house);
+    //         transfer::public_transfer(coinB, player);
+    //         transfer::public_transfer(coinC, player);
+    //     };
+    //     // Call init function, transfer HouseCap to the house
+    //     test_scenario::next_tx(scenario, house);
+    //     {
+    //         let ctx = test_scenario::ctx(scenario);
+    //         init(ctx);
+    //     };
+
+    //     // House initializes the contract with PK.
+    //     test_scenario::next_tx(scenario, house);
+    //     {
+    //         let house_cap = test_scenario::take_from_sender<HouseCap>(scenario);
+
+    //         let house_coin = test_scenario::take_from_sender<Coin<SUI>>(scenario);
+    //         let ctx = test_scenario::ctx(scenario);
+    //         initialize_house_data(house_cap, house_coin, wallet1, wallet2, wallet3, ctx);
+    //     };
+    //     // player creates the game.
+    //     test_scenario::next_tx(scenario, player);
+    //     {
+    //         let player_coin = test_scenario::take_from_sender<Coin<SUI>>(scenario);
+    //         let house_data = test_scenario::take_shared<HouseData>(scenario);
+    //         let ctx = test_scenario::ctx(scenario);
+    //         let guess = 0;
+    //         let user_randomness = x"51";
+    //         let result = play(guess, user_randomness, player_coin, 1000000000, &mut house_data, ctx);
+    //         debug::print(&result);
+    //         test_scenario::return_shared(house_data);
+    //     };
+
+    //     test_scenario::next_tx(scenario, player);
+    //     {
+    //         let outcome = test_scenario::take_shared<HouseData>(scenario);
+    //         debug::print(&outcome);
+
+    //         // let player_coin = test_scenario::take_from_sender<Coin<SUI>>(scenario);
+    //         // debug::print(&player_coin);
+    //         // test_scenario::return_shared(player_coin);
+    //         test_scenario::return_shared(outcome);
+    //     };
+
+    //     test_scenario::end(scenario_val);
+    // }
+
+
+    // #[test]
+    // fun test_fee_data() {
+    //     use sui::test_scenario;
+    //     use std::debug;
+
+    //     let house = @0xCAFE;
+    //     let player = @0xDECAF;
+    //     let wallet1 = @0xabc1;
+    //     let wallet2 = @0xdef2;
+    //     let wallet3 = @0xbea3;
+
+    //     let scenario_val = test_scenario::begin(house);
+    //     let scenario = &mut scenario_val;
+    //     {
+    //         let ctx = test_scenario::ctx(scenario);
+    //         let coinA = coin::mint_for_testing<SUI>(10000000000, ctx);
+    //         let coinB = coin::mint_for_testing<SUI>(1000000000, ctx);
+    //         let coinC = coin::mint_for_testing<SUI>(1000000000, ctx);
+    //         transfer::public_transfer(coinA, house);
+    //         transfer::public_transfer(coinB, player);
+    //         transfer::public_transfer(coinC, player);
+    //     };
+    //     // Call init function, transfer HouseCap to the house
+    //     test_scenario::next_tx(scenario, house);
+    //     {
+    //         let ctx = test_scenario::ctx(scenario);
+    //         init(ctx);
+    //     };
+
+    //     // House initializes the contract with PK.
+    //     test_scenario::next_tx(scenario, house);
+    //     {
+    //         let house_cap = test_scenario::take_from_sender<HouseCap>(scenario);
+
+    //         let house_coin = test_scenario::take_from_sender<Coin<SUI>>(scenario);
+    //         let ctx = test_scenario::ctx(scenario);
+            
+    //         initialize_house_data(house_cap, house_coin, wallet1, wallet2, wallet3, ctx);
+    //     };
+    //     // player creates the game.
+    //     test_scenario::next_tx(scenario, house);
+    //     {
+    //         let house_data = test_scenario::take_shared<HouseData>(scenario);
+    //         let ctx = test_scenario::ctx(scenario);
+    //         debug::print(&house_data);
+    //         update_wallets(&mut house_data, wallet3, wallet1, wallet2, ctx);
+    //         debug::print(&house_data);
+    //         test_scenario::return_shared(house_data);
+    //     };
+
+    //     test_scenario::end(scenario_val);
+    // }
 }
