@@ -238,7 +238,7 @@ module satoshi::coin_flip {
         // only the house address can update the capy owner fee
         assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
         // base fee cannot be higher than 100%
-        assert!(base_fee_in_bp <= MAX_FEE_IN_BP, EBaseFeeTooHigh);
+        assert!(capy_owner_fee_in_bp <= MAX_FEE_IN_BP, EBaseFeeTooHigh);
 
         house_data.capy_owner_fee_in_bp = capy_owner_fee_in_bp;
     }
