@@ -22,7 +22,6 @@ module satoshi::coin_flip {
 
     // Consts 
     const EPOCHS_CANCEL_AFTER: u64 = 7;
-    const STAKE: u64 = 5000;
     const MAX_FEE_IN_BP: u16 = 10_000;
 
     // Errors
@@ -49,6 +48,7 @@ module satoshi::coin_flip {
         balance: Balance<SUI>,
         house: address,
         public_key: vector<u8>,
+        max_stake: u64,
         fees: Balance<SUI>,
         base_fee_in_bp: u16,
         capy_owner_fee_in_bp: u16,
@@ -187,6 +187,7 @@ module satoshi::coin_flip {
             balance: coin::into_balance(coin),
             house: tx_context::sender(ctx),
             public_key,
+            max_stake: 50_00000000,
             fees: balance::zero(),
             base_fee_in_bp: 20,
             capy_owner_fee_in_bp: 10
@@ -219,6 +220,12 @@ module satoshi::coin_flip {
         transfer::public_transfer(coin, house_data.house);
     }
 
+    public entry func update_max_stake(house_data: &mut HouseData, max_stake: u64, ctx: &mut TxContext) {
+        // only the house address can update the base fee
+        assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
+
+        house_data.max_stake = max_stake;
+    }
     /// House can update the base fee in basis points
     /// @param house_data: The HouseData object
     /// @param base_fee_in_bp: The new base fee in basis points
@@ -267,16 +274,16 @@ module satoshi::coin_flip {
     /// @param user_randomness: A vector of randomly produced bytes that will be used to calculate the result of the VRF
     /// @param coin: The coin object that will be used to take the player's stake
     /// @param house_data: The HouseData object
-    public entry fun start_game(guess: u8, user_randomness: vector<u8>, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
+    public entry fun start_game(guess: u8, user_randomness: vector<u8>, stake_amount: u64, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
         // Ensure that guess is either 0 or 1
         assert!(guess == 1 || guess == 0, EInvalidGuess);
         // Ensure that the house has enough balance to play for this game
-        assert!(balance(house_data) >= STAKE, EInsufficientHouseBalance);
+        assert!(balance(house_data) >= stake_amount, EInsufficientHouseBalance);
         // get the user coin and convert it into a balance
-        assert!(coin::value(&coin) >= STAKE, EInsufficientBalance);
+        assert!(coin::value(&coin) >= stake_amount, EInsufficientBalance);
         let stake = coin::into_balance(coin);
         // get the house balance
-        let house_stake = balance::split(&mut house_data.balance, STAKE);
+        let house_stake = balance::split(&mut house_data.balance, stake_amount);
         balance::join(&mut stake, house_stake);
 
         let new_game = Game {
@@ -299,16 +306,16 @@ module satoshi::coin_flip {
     /// @param coin: The coin object that will be used to take the player's stake
     /// @param house_data: The HouseData object
     /// @param capy: The SuiFren<Capy> object that will be used to determine the capy owner's fee & verify capy ownership
-    public entry fun start_game_with_capy(capy: SuiFren<Capy>, guess: u8, user_randomness: vector<u8>, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
+    public entry fun start_game_with_capy(capy: SuiFren<Capy>, guess: u8, user_randomness: vector<u8>, stake_amount: u64, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
         // Ensure that guess is either 0 or 1
         assert!(guess == 1 || guess == 0, EInvalidGuess);
         // Ensure that the house has enough balance to play for this game
-        assert!(balance(house_data) >= STAKE, EInsufficientHouseBalance);
+        assert!(balance(house_data) >= stake_amount, EInsufficientHouseBalance);
         // get the user coin and convert it into a balance
-        assert!(coin::value(&coin) >= STAKE, EInsufficientBalance);
+        assert!(coin::value(&coin) >= stake_amount, EInsufficientBalance);
         let stake = coin::into_balance(coin);
         // get the house balance
-        let house_stake = balance::split(&mut house_data.balance, STAKE);
+        let house_stake = balance::split(&mut house_data.balance, stake_amount);
         balance::join(&mut stake, house_stake);
 
         let new_game = Game {
