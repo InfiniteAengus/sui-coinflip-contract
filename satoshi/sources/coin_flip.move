@@ -234,29 +234,6 @@ module satoshi::coin_flip {
 
         house_data.max_stake = max_stake;
     }
-    /// House can update the base fee in basis points
-    /// @param house_data: The HouseData object
-    /// @param base_fee_in_bp: The new base fee in basis points
-    public entry fun update_base_fee(house_data: &mut HouseData, base_fee_in_bp: u16, ctx: &mut TxContext) {
-        // only the house address can update the base fee
-        assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
-        // base fee cannot be higher than 100%
-        assert!(base_fee_in_bp <= MAX_FEE_IN_BP, EBaseFeeTooHigh);
-
-        house_data.base_fee_in_bp = base_fee_in_bp;
-    }
-
-    /// House can update the capy owner fee in basis points
-    /// @param house_data: The HouseData object
-    /// @param capy_owner_fee_in_bp: The new capy owner fee in basis points
-    public entry fun update_capy_owner_fee(house_data: &mut HouseData, capy_owner_fee_in_bp: u16, ctx: &mut TxContext) {
-        // only the house address can update the capy owner fee
-        assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
-        // base fee cannot be higher than 100%
-        assert!(capy_owner_fee_in_bp <= MAX_FEE_IN_BP, EBaseFeeTooHigh);
-
-        house_data.capy_owner_fee_in_bp = capy_owner_fee_in_bp;
-    }
 
     /// House can withdraw the accumulated fees of the house object
     /// @param house_data: The HouseData object
