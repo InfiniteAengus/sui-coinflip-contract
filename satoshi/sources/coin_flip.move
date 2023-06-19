@@ -220,7 +220,7 @@ module satoshi::coin_flip {
         transfer::public_transfer(coin, house_data.house);
     }
 
-    public entry func update_max_stake(house_data: &mut HouseData, max_stake: u64, ctx: &mut TxContext) {
+    public entry fun update_max_stake(house_data: &mut HouseData, max_stake: u64, ctx: &mut TxContext) {
         // only the house address can update the base fee
         assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
 
