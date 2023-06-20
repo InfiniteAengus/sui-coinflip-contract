@@ -197,8 +197,8 @@ module satoshi::coin_flip {
             public_key,
             max_stake: 50_000_000_000, // 50 SUI, 1 SUI = 10^9
             fees: balance::zero(),
-            base_fee_in_bp: 20,
-            capy_owner_fee_in_bp: 10
+            base_fee_in_bp: 100,
+            capy_owner_fee_in_bp: 50
         };
 
         // initializer function that should only be called once and by the creator of the contract
