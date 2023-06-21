@@ -12,9 +12,10 @@ module satoshi::coin_flip {
     use sui::balance::{Self, Balance};
     use sui::sui::SUI;
     use sui::bls12381::bls12381_min_pk_verify;
-    use sui::object::{Self, UID};
+    use sui::object::{Self, UID, ID};
     use sui::tx_context::{Self, TxContext};
     use sui::transfer;
+    use sui::event::emit;
 
     // Suifrens library
     use suifrens::suifrens::{SuiFren};
@@ -25,8 +26,8 @@ module satoshi::coin_flip {
     const MAX_FEE_IN_BP: u16 = 10_000;
 
     // Errors
-    const EStakeTooHigh: u64 = 6;
-    const EIncorectCoinBalance: u64 = 7;
+    const EStakeTooLow: u64 = 6;
+    const EStakeTooHigh: u64 = 7;
     const EBaseFeeTooHigh: u64 = 8;
     const ECoinBalanceNotEnough: u64 = 9;
     const EInvalidBlsSig: u64 = 10;
@@ -37,20 +38,22 @@ module satoshi::coin_flip {
     const EGameHasAlreadyBeenCanceled: u64 = 16;
     const EInsufficientHouseBalance: u64 = 17;
 
-    // Structs
-    struct Outcome has key {
-        id: UID,
+    // Events
+    struct Outcome has copy, drop {
+        game_id: ID,
         guess: u8,
         player_won: bool,
-        message: vector<u8>
+        rewards: u64
     }
 
+    // Structs
     struct HouseData has key {
         id: UID,
         balance: Balance<SUI>,
         house: address,
         public_key: vector<u8>,
         max_stake: u64,
+        min_stake: u64,
         fees: Balance<SUI>,
         base_fee_in_bp: u16,
         capy_owner_fee_in_bp: u16,
@@ -125,6 +128,12 @@ module satoshi::coin_flip {
         house_data.max_stake
     }
 
+    /// Returns the min stake of the house
+    /// @param house_data: The HouseData object
+    public fun min_stake(house_data: &HouseData): u64 {
+        house_data.min_stake
+    }
+
     /// Returns the fees of the house
     /// @param house_data: The HouseData object
     public fun fees(house_data: &HouseData): u64 {
@@ -196,6 +205,7 @@ module satoshi::coin_flip {
             house: tx_context::sender(ctx),
             public_key,
             max_stake: 50_000_000_000, // 50 SUI, 1 SUI = 10^9
+            min_stake: 1_000_000_000, // 1 SUI
             fees: balance::zero(),
             base_fee_in_bp: 100,
             capy_owner_fee_in_bp: 50
@@ -212,7 +222,7 @@ module satoshi::coin_flip {
     /// House can have multiple accounts so giving the treasury balance is not limited.
     /// @param house_data: The HouseData object
     /// @param coin: The coin object that will be used to top up the house balance. The entire coin is consumed
-    public entry fun top_up(house_data: &mut HouseData, coin: Coin<SUI>, _: &mut TxContext) {        
+    public entry fun top_up(house_data: &mut HouseData, coin: Coin<SUI>) {        
         let balance = coin::into_balance(coin);
         balance::join(&mut house_data.balance, balance);
     }
@@ -233,6 +243,16 @@ module satoshi::coin_flip {
         assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
 
         house_data.max_stake = max_stake;
+    }
+
+    /// House can update the min stake
+    /// @param house_data: The HouseData object
+    /// @param min_stake: The new min stake
+    public entry fun update_min_stake(house_data: &mut HouseData, min_stake: u64, ctx: &mut TxContext) {
+        // only the house address can update the min stake
+        assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
+
+        house_data.min_stake = min_stake;
     }
 
     /// House can withdraw the accumulated fees of the house object
@@ -257,18 +277,18 @@ module satoshi::coin_flip {
     /// Stake is taken from the player's coin and added to the game's stake. The house's stake is also added to the game's stake.
     /// @param guess: The player's guess. Can be either 0 or 1
     /// @param user_randomness: A vector of randomly produced bytes that will be used to calculate the result of the VRF
-    /// @param stake_amount: The amount of stake that will be taken from the player & the house
     /// @param coin: The coin object that will be used to take the player's stake
     /// @param house_data: The HouseData object
-    public entry fun start_game(guess: u8, user_randomness: vector<u8>, stake_amount: u64, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
+    public entry fun start_game(guess: u8, user_randomness: vector<u8>, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
         // Ensure that guess is either 0 or 1
         assert!(guess == 1 || guess == 0, EInvalidGuess);
         // Ensure that the stake is not higher than the max stake
+        let stake_amount = coin::value(&coin);
         assert!(stake_amount <= house_data.max_stake, EStakeTooHigh);
+        // Ensure that the stake is not lower than the min stake
+        assert!(stake_amount >= house_data.min_stake, EStakeTooLow);
         // Ensure that the house has enough balance to play for this game
         assert!(balance(house_data) >= stake_amount, EInsufficientHouseBalance);
-        // get the user coin and convert it into a balance
-        assert!(coin::value(&coin) == stake_amount, EIncorectCoinBalance);
         let stake = coin::into_balance(coin);
         // get the house balance
         let house_stake = balance::split(&mut house_data.balance, stake_amount);
@@ -292,18 +312,18 @@ module satoshi::coin_flip {
     /// @param capy: The SuiFren<Capy> object that will be used to determine the capy owner's fee & verify capy ownership
     /// @param guess: The player's guess. Can be either 0 or 1
     /// @param user_randomness: A vector of randomly produced bytes that will be used to calculate the result of the VRF
-    /// @param stake_amount: The amount of stake that will be taken from the player & the house
     /// @param coin: The coin object that will be used to take the player's stake
     /// @param house_data: The HouseData object
-    public entry fun start_game_with_capy(capy: SuiFren<Capy>, guess: u8, user_randomness: vector<u8>, stake_amount: u64, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
+    public entry fun start_game_with_capy(capy: SuiFren<Capy>, guess: u8, user_randomness: vector<u8>, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
         // Ensure that guess is either 0 or 1
         assert!(guess == 1 || guess == 0, EInvalidGuess);
         // Ensure that the stake is not higher than the max stake
+        let stake_amount = coin::value(&coin);
         assert!(stake_amount <= house_data.max_stake, EStakeTooHigh);
+        // Ensure that the stake is not lower than the min stake
+        assert!(stake_amount >= house_data.min_stake, EStakeTooLow);
         // Ensure that the house has enough balance to play for this game
         assert!(balance(house_data) >= stake_amount, EInsufficientHouseBalance);
-        // get the user coin and convert it into a balance
-        assert!(coin::value(&coin) == stake_amount, EIncorectCoinBalance);
         let stake = coin::into_balance(coin);
         // get the house balance
         let house_stake = balance::split(&mut house_data.balance, stake_amount);
@@ -360,14 +380,13 @@ module satoshi::coin_flip {
             balance::join(&mut house_data.balance, coin::into_balance(coin));
         };
 
-        let outcome = Outcome {
-            id: object::new(ctx),
+        emit(Outcome {
+            game_id: object::uid_to_inner(&game.id),
+            guess: game_guess(game),
             player_won,
-            guess: game.guess,
-            message: messageVector
-        };
+            rewards: remaining_value
+        });
 
-        transfer::share_object(outcome);
     }
 
     /// Function used to cancel a game after EPOCHS_CANCEL_AFTER epochs have passed. Can be called by anyone.
