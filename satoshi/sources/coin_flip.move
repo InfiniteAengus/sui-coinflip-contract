@@ -37,13 +37,14 @@ module satoshi::coin_flip {
     const EInsufficientBalance: u64 = 15;
     const EGameHasAlreadyBeenCanceled: u64 = 16;
     const EInsufficientHouseBalance: u64 = 17;
+    const EGameAlreadyEnded: u64 = 18;
 
     // Events
     struct Outcome has copy, drop {
         game_id: ID,
         guess: u8,
         player_won: bool,
-        rewards: u64
+        bet_amount: u64
     }
 
     // Structs
@@ -353,6 +354,8 @@ module satoshi::coin_flip {
     /// @param bls_sig: The bls signature of the game id and the player's randomn bytes appended together
     /// @param house_data: The HouseData object
     public entry fun play(game: &mut Game, bls_sig: vector<u8>, house_data: &mut HouseData, ctx: &mut TxContext) {
+        // Ensure that the game has not already ended
+        assert!(stake(game) > 0, EGameAlreadyEnded);
         // Step 1: Check the bls signature, if its invalid, house loses
         let messageVector = *&object::id_bytes(game);
         vector::append(&mut messageVector, player_randomness(game));
@@ -384,7 +387,7 @@ module satoshi::coin_flip {
             game_id: object::uid_to_inner(&game.id),
             guess: game_guess(game),
             player_won,
-            rewards: remaining_value
+            bet_amount: amount + remaining_value
         });
 
     }
@@ -400,6 +403,12 @@ module satoshi::coin_flip {
         assert!(total_balance > 0, EGameHasAlreadyBeenCanceled);
         let coin = coin::take(&mut game.stake, total_balance, ctx);
         transfer::public_transfer(coin, game.player);
+        emit(Outcome {
+            game_id: object::uid_to_inner(&game.id),
+            guess: game_guess(game),
+            player_won: true,
+            bet_amount: total_balance
+        });
     }
 
 }
