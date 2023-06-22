@@ -269,7 +269,7 @@ module satoshi::coin_flip {
 
     /// Helper function to calculate the amount of fees to be paid.
     public fun fee_amount(game: &Game): u64 {
-        let amount = (((stake(game) as u128) * (fee_in_bp(game) as u128) / 10_000) as u64);
+        let amount = (((stake(game) as u128) * (fee_in_bp(game) as u128) / 10_000 / 2) as u64);
 
         amount
     }
