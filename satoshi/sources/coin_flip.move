@@ -24,6 +24,7 @@ module satoshi::coin_flip {
     // Consts 
     const EPOCHS_CANCEL_AFTER: u64 = 7;
     const MAX_FEE_IN_BP: u16 = 10_000;
+    const GAME_RETURN: u8 = 2;
 
     // Errors
     const EStakeTooLow: u64 = 6;
@@ -268,8 +269,10 @@ module satoshi::coin_flip {
     }
 
     /// Helper function to calculate the amount of fees to be paid.
+    /// Fees are only applied on the player's stake.
+    /// @param game: A Game object
     public fun fee_amount(game: &Game): u64 {
-        let amount = (((stake(game) as u128) * (fee_in_bp(game) as u128) / 10_000 / 2) as u64);
+        let amount = ((((stake(game) / (GAME_RETURN as u64)) as u128) * (fee_in_bp(game) as u128) / 10_000) as u64);
 
         amount
     }
@@ -354,8 +357,9 @@ module satoshi::coin_flip {
     /// @param bls_sig: The bls signature of the game id and the player's randomn bytes appended together
     /// @param house_data: The HouseData object
     public entry fun play(game: &mut Game, bls_sig: vector<u8>, house_data: &mut HouseData, ctx: &mut TxContext) {
+        let total_stake = stake(game);
         // Ensure that the game has not already ended
-        assert!(stake(game) > 0, EGameAlreadyEnded);
+        assert!(total_stake > 0, EGameAlreadyEnded);
         // Step 1: Check the bls signature, if its invalid, house loses
         let messageVector = *&object::id_bytes(game);
         vector::append(&mut messageVector, player_randomness(game));
@@ -365,21 +369,22 @@ module satoshi::coin_flip {
         let first_byte = vector::borrow(&bls_sig, 0);
         let player_won: bool = game.guess == *first_byte % 2;
 
-        // Step 3: Distribute funds based on result & charge fee
-        // Calculate the fee and transfer it to the house
-        let amount = fee_amount(game);
-        let fees = balance::split(&mut game.stake, amount);
-        balance::join(&mut house_data.fees, fees);
-
-        // Calculate the rewards and take it from the game stake
-        let remaining_value = stake(game);
-        let coin = coin::take(&mut game.stake, remaining_value, ctx);
+        // Step 3: Distribute funds based on result
 
         if(player_won){
             // Step 3.a: If player wins transfer the game balance as a coin to the player
+            // Calculate the fee and transfer it to the house
+            let amount = fee_amount(game);
+            let fees = balance::split(&mut game.stake, amount);
+            balance::join(&mut house_data.fees, fees);
+
+            // Calculate the rewards and take it from the game stake
+            let player_rewards = stake(game);
+            let coin = coin::take(&mut game.stake, player_rewards, ctx);
             transfer::public_transfer(coin, game.player);
         } else {
-            // Step 3.b: If house wins, then add the game stake to the house_data.house_balance
+            // Step 3.b: If house wins, then add the game stake to the house_data.house_balance (no fees are taken)
+            let coin = coin::take(&mut game.stake, total_stake, ctx);
             balance::join(&mut house_data.balance, coin::into_balance(coin));
         };
 
@@ -387,7 +392,7 @@ module satoshi::coin_flip {
             game_id: object::uid_to_inner(&game.id),
             guess: game_guess(game),
             player_won,
-            bet_amount: amount + remaining_value
+            bet_amount: total_stake
         });
 
     }
