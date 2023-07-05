@@ -2,8 +2,12 @@
 name = "satoshi"
 version = "0.0.1"
 
-[dependencies]
-suifrens = { git = "https://github.com/MystenLabs/apps.git", subdir = "suifrens/suifrens", rev = "testnet" }
+[dependencies.suifrens]
+local = "./deps/suifrens" 
+
+[dependencies.desuilabs]
+local = "./deps/desuilabs" 
 
 [addresses]
-satoshi = "0x0"
+satoshi_flip=  "0x0"
+sui =  "0x2"
