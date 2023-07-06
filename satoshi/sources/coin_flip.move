@@ -3,11 +3,8 @@
 
 module satoshi::coin_flip {
     // Imports
-
-    // Std library
     use std::vector;
 
-    // Sui library
     use sui::coin::{Self, Coin};
     use sui::balance::{Self, Balance};
     use sui::sui::SUI;
@@ -16,10 +13,16 @@ module satoshi::coin_flip {
     use sui::tx_context::{Self, TxContext};
     use sui::transfer;
     use sui::event::emit;
+    use sui::kiosk::{Self, Kiosk};
+    use sui::hash::{blake2b256};
 
     // Suifrens library
     use suifrens::suifrens::{SuiFren};
     use suifrens::capy::Capy;
+    use suifrens::bullshark::Bullshark;
+
+    // Dlab library
+    use desuilabs::dlab::Dlab;
 
     // Consts 
     const EPOCHS_CANCEL_AFTER: u64 = 7;
@@ -27,25 +30,32 @@ module satoshi::coin_flip {
     const GAME_RETURN: u8 = 2;
 
     // Errors
-    const EStakeTooLow: u64 = 6;
-    const EStakeTooHigh: u64 = 7;
-    const EBaseFeeTooHigh: u64 = 8;
-    const ECoinBalanceNotEnough: u64 = 9;
-    const EInvalidBlsSig: u64 = 10;
-    const ECallerNotHouse: u64 = 12;
-    const ECanNotCancel: u64 = 13;
-    const EInvalidGuess: u64 = 14;
-    const EInsufficientBalance: u64 = 15;
-    const EGameHasAlreadyBeenCanceled: u64 = 16;
-    const EInsufficientHouseBalance: u64 = 17;
-    const EGameAlreadyEnded: u64 = 18;
+    const EStakeTooLow: u64 = 1;
+    const EStakeTooHigh: u64 = 2;
+    const EInvalidBlsSig: u64 = 3;
+    const ECallerNotHouse: u64 = 4;
+    const ECanNotChallenge: u64 = 5;
+    const EInvalidGuess: u64 = 6;
+    const EInsufficientBalance: u64 = 7;
+    const EGameAlreadyChallenged: u64 = 8;
+    const EInsufficientHouseBalance: u64 = 9;
+    const EGameAlreadyEnded: u64 = 10;
+    const EItemNotBullshark: u64 = 11;
+    const EItemNotDlabNft: u64 = 12;
 
     // Events
+    struct NewGame has copy, drop {
+        game_id: ID,
+        player: address,
+        guess: u8,
+        stake: u64, // 2x stake makes the total pool
+        fee_bp: u16,
+    }
+
     struct Outcome has copy, drop {
         game_id: ID,
-        guess: u8,
         player_won: bool,
-        bet_amount: u64
+        challenged: bool
     }
 
     // Structs
@@ -58,7 +68,7 @@ module satoshi::coin_flip {
         min_stake: u64,
         fees: Balance<SUI>,
         base_fee_in_bp: u16,
-        capy_owner_fee_in_bp: u16,
+        reduced_fee_in_bp: u16,
     }
 
     struct Game has key {
@@ -68,7 +78,8 @@ module satoshi::coin_flip {
         guess: u8,
         player: address,
         user_randomness: vector<u8>,
-        fee_bp: u16
+        fee_bp: u16,
+        challenged: bool
     }
 
     struct HouseCap has key {
@@ -87,21 +98,6 @@ module satoshi::coin_flip {
     #[test_only]
     public fun init_for_testing(ctx: &mut TxContext) {
         init(ctx)
-    }
-
-    // --------------- Outcome Accessors ---------------
-
-    /// Returns the player's guess for a specific outcome
-    /// @param outcome: An Outcome object
-    public fun outcome_guess(outcome: &Outcome): u8 {
-        outcome.guess
-    }
-
-    /// Returns a boolean declaring if the player won or not
-    /// True if the player won, false if the house won
-    /// @param outcome: An Outcome object
-    public fun player_won(outcome: &Outcome): bool {
-        outcome.player_won
     }
 
     // --------------- HouseData Accessors ---------------
@@ -142,16 +138,16 @@ module satoshi::coin_flip {
         balance::value(&house_data.fees)
     }
 
-    /// Returns the base fee of the house
+    /// Returns the base fee
     /// @param house_data: The HouseData object
     public fun base_fee_in_bp(house_data: &HouseData): u16 {
         house_data.base_fee_in_bp
     }
 
-    /// Returns the capy owner fee of the house
+    /// Returns the reduced fee
     /// @param house_data: The HouseData object
-    public fun capy_owner_fee_in_bp(house_data: &HouseData): u16 {
-        house_data.capy_owner_fee_in_bp
+    public fun reduced_fee_in_bp(house_data: &HouseData): u16 {
+        house_data.reduced_fee_in_bp
     }
 
     // --------------- Game Accessors ---------------
@@ -170,7 +166,7 @@ module satoshi::coin_flip {
 
     /// Returns the player's guess
     /// @param game: A Game object
-    public fun game_guess(game: &Game): u8 {
+    public fun guess(game: &Game): u8 {
         game.guess
     }
 
@@ -192,6 +188,12 @@ module satoshi::coin_flip {
         game.fee_bp
     }
 
+    /// Returns the challenged status of the game
+    /// @param game: A Game object
+    public fun challenged(game: &Game): bool {
+        game.challenged
+    }
+
     // Functions
 
     /// Initializes the house data object. This object is involed in all games created by the same instance of this package. 
@@ -210,7 +212,7 @@ module satoshi::coin_flip {
             min_stake: 1_000_000_000, // 1 SUI
             fees: balance::zero(),
             base_fee_in_bp: 100,
-            capy_owner_fee_in_bp: 50
+            reduced_fee_in_bp: 50
         };
 
         // initializer function that should only be called once and by the creator of the contract
@@ -224,7 +226,7 @@ module satoshi::coin_flip {
     /// House can have multiple accounts so giving the treasury balance is not limited.
     /// @param house_data: The HouseData object
     /// @param coin: The coin object that will be used to top up the house balance. The entire coin is consumed
-    public entry fun top_up(house_data: &mut HouseData, coin: Coin<SUI>) {        
+    public entry fun top_up(house_data: &mut HouseData, coin: Coin<SUI>, _: &mut TxContext) {        
         let balance = coin::into_balance(coin);
         balance::join(&mut house_data.balance, balance);
     }
@@ -233,16 +235,16 @@ module satoshi::coin_flip {
     /// @param house_data: The HouseData object
     public entry fun withdraw(house_data: &mut HouseData, ctx: &mut TxContext) {
         // only the house address can withdraw funds
-        assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
+        assert!(tx_context::sender(ctx) == house(house_data), ECallerNotHouse);
 
-        let total_balance = balance::value(&house_data.balance);
+        let total_balance = balance(house_data);
         let coin = coin::take(&mut house_data.balance, total_balance, ctx);
-        transfer::public_transfer(coin, house_data.house);
+        transfer::public_transfer(coin, house(house_data));
     }
 
     public entry fun update_max_stake(house_data: &mut HouseData, max_stake: u64, ctx: &mut TxContext) {
         // only the house address can update the base fee
-        assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
+        assert!(tx_context::sender(ctx) == house(house_data), ECallerNotHouse);
 
         house_data.max_stake = max_stake;
     }
@@ -252,7 +254,7 @@ module satoshi::coin_flip {
     /// @param min_stake: The new min stake
     public entry fun update_min_stake(house_data: &mut HouseData, min_stake: u64, ctx: &mut TxContext) {
         // only the house address can update the min stake
-        assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
+        assert!(tx_context::sender(ctx) == house(house_data), ECallerNotHouse);
 
         house_data.min_stake = min_stake;
     }
@@ -261,11 +263,11 @@ module satoshi::coin_flip {
     /// @param house_data: The HouseData object
     public entry fun claim_fees(house_data: &mut HouseData, ctx: &mut TxContext) {
         // only the house address can withdraw fee funds
-        assert!(tx_context::sender(ctx) == house_data.house, ECallerNotHouse);
+        assert!(tx_context::sender(ctx) == house(house_data), ECallerNotHouse);
 
-        let total_fees = balance::value(&house_data.fees);
+        let total_fees = fees(house_data);
         let coin = coin::take(&mut house_data.fees, total_fees, ctx);
-        transfer::public_transfer(coin, house_data.house);
+        transfer::public_transfer(coin, house(house_data));
     }
 
     /// Helper function to calculate the amount of fees to be paid.
@@ -277,20 +279,20 @@ module satoshi::coin_flip {
         amount
     }
 
-    /// Function used to create a new game. The player must provide a guess and a randomn vector of bytes.
+    /// Internal helper function used to create a new game. The player must provide a guess and a randomn vector of bytes.
     /// Stake is taken from the player's coin and added to the game's stake. The house's stake is also added to the game's stake.
     /// @param guess: The player's guess. Can be either 0 or 1
     /// @param user_randomness: A vector of randomly produced bytes that will be used to calculate the result of the VRF
     /// @param coin: The coin object that will be used to take the player's stake
     /// @param house_data: The HouseData object
-    public entry fun start_game(guess: u8, user_randomness: vector<u8>, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
+    fun internal_start_game(guess: u8, user_randomness: vector<u8>, coin: Coin<SUI>, house_data: &mut HouseData, fee_bp: u16, ctx: &mut TxContext): Game {
         // Ensure that guess is either 0 or 1
         assert!(guess == 1 || guess == 0, EInvalidGuess);
         // Ensure that the stake is not higher than the max stake
         let stake_amount = coin::value(&coin);
-        assert!(stake_amount <= house_data.max_stake, EStakeTooHigh);
+        assert!(stake_amount <= max_stake(house_data), EStakeTooHigh);
         // Ensure that the stake is not lower than the min stake
-        assert!(stake_amount >= house_data.min_stake, EStakeTooLow);
+        assert!(stake_amount >= min_stake(house_data), EStakeTooLow);
         // Ensure that the house has enough balance to play for this game
         assert!(balance(house_data) >= stake_amount, EInsufficientHouseBalance);
         let stake = coin::into_balance(coin);
@@ -305,46 +307,64 @@ module satoshi::coin_flip {
             guess,
             player: tx_context::sender(ctx),
             user_randomness,
-            fee_bp: base_fee_in_bp(house_data),
+            fee_bp,
+            challenged: false
         };
 
+        emit (NewGame {
+            game_id: object::uid_to_inner(&new_game.id),
+            player: tx_context::sender(ctx),
+            guess,
+            stake: stake_amount,
+            fee_bp,
+        });
+
+        new_game
+    }
+
+    /// Function used to create a new game. The player must provide a guess and a randomn vector of bytes.
+    /// Stake is taken from the player's coin and added to the game's stake. The house's stake is also added to the game's stake.
+    public entry fun start_game(guess: u8, user_randomness: vector<u8>, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
+        let fee_bp = base_fee_in_bp(house_data);
+        let new_game = internal_start_game(guess, user_randomness, coin, house_data, fee_bp, ctx);
+        
         transfer::share_object(new_game);
     }
 
     /// Function used to create a new game for a capy owner. Incurs reduced fees. The player must provide a guess and a randomn vector of bytes.
     /// Stake is taken from the player's coin and added to the game's stake. The house's stake is also added to the game's stake.
     /// @param capy: The SuiFren<Capy> object that will be used to determine the capy owner's fee & verify capy ownership
-    /// @param guess: The player's guess. Can be either 0 or 1
-    /// @param user_randomness: A vector of randomly produced bytes that will be used to calculate the result of the VRF
-    /// @param coin: The coin object that will be used to take the player's stake
-    /// @param house_data: The HouseData object
-    public entry fun start_game_with_capy(capy: SuiFren<Capy>, guess: u8, user_randomness: vector<u8>, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
-        // Ensure that guess is either 0 or 1
-        assert!(guess == 1 || guess == 0, EInvalidGuess);
-        // Ensure that the stake is not higher than the max stake
-        let stake_amount = coin::value(&coin);
-        assert!(stake_amount <= house_data.max_stake, EStakeTooHigh);
-        // Ensure that the stake is not lower than the min stake
-        assert!(stake_amount >= house_data.min_stake, EStakeTooLow);
-        // Ensure that the house has enough balance to play for this game
-        assert!(balance(house_data) >= stake_amount, EInsufficientHouseBalance);
-        let stake = coin::into_balance(coin);
-        // get the house balance
-        let house_stake = balance::split(&mut house_data.balance, stake_amount);
-        balance::join(&mut stake, house_stake);
+    public entry fun start_game_with_capy(_: &SuiFren<Capy>, guess: u8, user_randomness: vector<u8>, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
+        let fee_bp = reduced_fee_in_bp(house_data);
+        let new_game = internal_start_game(guess, user_randomness, coin, house_data, fee_bp, ctx);
 
-        let new_game = Game {
-            id: object::new(ctx),
-            guess_placed_epoch: tx_context::epoch(ctx),
-            stake,
-            guess,
-            player: tx_context::sender(ctx),
-            user_randomness,
-            fee_bp: capy_owner_fee_in_bp(house_data),
-        };
+        transfer::share_object(new_game);
+    }
 
-        // Return the capy back to its owner
-        transfer::public_transfer(capy, tx_context::sender(ctx));
+    /// Function used to create a new game for a bullshark owner. Incurs reduced fees. The player must provide a guess and a randomn vector of bytes.
+    /// Stake is taken from the player's coin and added to the game's stake. The house's stake is also added to the game's stake.
+    /// @param kiosk: The kiosk the user holds that contains a bullshark
+    /// @param item: The id of the item of type SuiFren<Bullshark>. Will be used to verify Bullshark ownership
+    public entry fun start_game_with_bullshark(kiosk: &Kiosk, item: ID, guess: u8, user_randomness: vector<u8>, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
+        // Ensure user has bullshark
+        let hasBullshark = kiosk::has_item_with_type<SuiFren<Bullshark>>(kiosk, item);
+        assert!(hasBullshark, EItemNotBullshark);
+        let fee_bp = reduced_fee_in_bp(house_data);
+        let new_game = internal_start_game(guess, user_randomness, coin, house_data, fee_bp, ctx);
+
+        transfer::share_object(new_game);
+    }
+
+    /// Function used to create a new game for a dlab NFT owner. Incurs reduced fees. The player must provide a guess and a randomn vector of bytes.
+    /// Stake is taken from the player's coin and added to the game's stake. The house's stake is also added to the game's stake.
+    /// @param kiosk: The kiosk the user holds that contains a dlab NFT
+    /// @param item: The id of the item of type Dlab. Will be used to verify Dlab NFT ownership
+    public entry fun start_game_with_dlab(kiosk: &Kiosk, item: ID, guess: u8, user_randomness: vector<u8>, coin: Coin<SUI>, house_data: &mut HouseData, ctx: &mut TxContext) {
+        // Ensure user has bullshark
+        let hasDlabNft = kiosk::has_item_with_type<Dlab>(kiosk, item);
+        assert!(hasDlabNft, EItemNotDlabNft);
+        let fee_bp = reduced_fee_in_bp(house_data);
+        let new_game = internal_start_game(guess, user_randomness, coin, house_data, fee_bp, ctx);
 
         transfer::share_object(new_game);
     }
@@ -358,16 +378,22 @@ module satoshi::coin_flip {
     /// @param house_data: The HouseData object
     public entry fun play(game: &mut Game, bls_sig: vector<u8>, house_data: &mut HouseData, ctx: &mut TxContext) {
         let total_stake = stake(game);
+        // Ensure that the game hasn't been already challenged
+        assert!(!challenged(game), EGameAlreadyChallenged);
         // Ensure that the game has not already ended
         assert!(total_stake > 0, EGameAlreadyEnded);
         // Step 1: Check the bls signature, if its invalid, house loses
         let messageVector = *&object::id_bytes(game);
         vector::append(&mut messageVector, player_randomness(game));
-        let is_sig_valid = bls12381_min_pk_verify(&bls_sig, &house_data.public_key, &messageVector);
+        let is_sig_valid = bls12381_min_pk_verify(&bls_sig, &public_key(house_data), &messageVector);
         assert!(is_sig_valid, EInvalidBlsSig);
+
+        // Hash the beacon before taking the 1st byte
+        let hashed_beacon = blake2b256(&bls_sig);
         // Step 2: Determine winner
-        let first_byte = vector::borrow(&bls_sig, 0);
-        let player_won: bool = game.guess == *first_byte % 2;
+        let first_byte = vector::borrow(&hashed_beacon, 0);
+
+        let player_won: bool = guess(game) == *first_byte % 2;
 
         // Step 3: Distribute funds based on result
 
@@ -381,7 +407,7 @@ module satoshi::coin_flip {
             // Calculate the rewards and take it from the game stake
             let player_rewards = stake(game);
             let coin = coin::take(&mut game.stake, player_rewards, ctx);
-            transfer::public_transfer(coin, game.player);
+            transfer::public_transfer(coin, player(game));
         } else {
             // Step 3.b: If house wins, then add the game stake to the house_data.house_balance (no fees are taken)
             let coin = coin::take(&mut game.stake, total_stake, ctx);
@@ -390,11 +416,9 @@ module satoshi::coin_flip {
 
         emit(Outcome {
             game_id: object::uid_to_inner(&game.id),
-            guess: game_guess(game),
             player_won,
-            bet_amount: total_stake
+            challenged: false
         });
-
     }
 
     /// Function used to cancel a game after EPOCHS_CANCEL_AFTER epochs have passed. Can be called by anyone.
@@ -403,16 +427,19 @@ module satoshi::coin_flip {
     public entry fun dispute_and_win(game: &mut Game, ctx: &mut TxContext) {
         let caller_epoch = tx_context::epoch(ctx);
         // Ensure that minimum epochs have passed before user can cancel
-        assert!(game.guess_placed_epoch + EPOCHS_CANCEL_AFTER <= caller_epoch, ECanNotCancel);
-        let total_balance = balance::value(&game.stake);
-        assert!(total_balance > 0, EGameHasAlreadyBeenCanceled);
+        assert!(guess_placed_epoch(game) + EPOCHS_CANCEL_AFTER <= caller_epoch, ECanNotChallenge);
+        assert!(!challenged(game), EGameAlreadyChallenged);
+        let total_balance = stake(game);
+        assert!(total_balance > 0, EGameAlreadyEnded);
+
         let coin = coin::take(&mut game.stake, total_balance, ctx);
-        transfer::public_transfer(coin, game.player);
+        transfer::public_transfer(coin, player(game));
+        game.challenged = true;
+        
         emit(Outcome {
             game_id: object::uid_to_inner(&game.id),
-            guess: game_guess(game),
             player_won: true,
-            bet_amount: total_balance
+            challenged: true
         });
     }
 
