@@ -47,6 +47,7 @@ module satoshi::coin_flip {
     struct NewGame has copy, drop {
         game_id: ID,
         player: address,
+        user_randomness: vector<u8>,
         guess: u8,
         stake: u64, // 2x stake makes the total pool
         fee_bp: u16,
@@ -314,6 +315,7 @@ module satoshi::coin_flip {
         emit (NewGame {
             game_id: object::uid_to_inner(&new_game.id),
             player: tx_context::sender(ctx),
+            user_randomness,
             guess,
             stake: stake_amount,
             fee_bp,
