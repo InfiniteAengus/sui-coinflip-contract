@@ -42,6 +42,7 @@ module satoshi::coin_flip {
     const EGameAlreadyEnded: u64 = 10;
     const EItemNotBullshark: u64 = 11;
     const EItemNotDlabNft: u64 = 12;
+    const EInvalidGameResult: u64 = 13;
 
     // Events
     struct NewGame has copy, drop {
@@ -80,7 +81,8 @@ module satoshi::coin_flip {
         player: address,
         user_randomness: vector<u8>,
         fee_bp: u16,
-        challenged: bool
+        challenged: bool,
+        player_won: u8
     }
 
     struct HouseCap has key {
@@ -280,6 +282,13 @@ module satoshi::coin_flip {
         amount
     }
 
+    /// Update result of the game object
+    /// @param game: The Game object
+    fun update_game_result(game: &mut Game, player_won: u8, ctx: &mut TxContext) {
+        assert!(player_won == 1 || player_won == 2, EInvalidGameResult);
+        game.player_won = player_won;
+    }
+
     /// Internal helper function used to create a new game. The player must provide a guess and a randomn vector of bytes.
     /// Stake is taken from the player's coin and added to the game's stake. The house's stake is also added to the game's stake.
     /// @param guess: The player's guess. Can be either 0 or 1
@@ -309,7 +318,8 @@ module satoshi::coin_flip {
             player: tx_context::sender(ctx),
             user_randomness,
             fee_bp,
-            challenged: false
+            challenged: false,
+            player_won: 0
         };
 
         emit (NewGame {
@@ -410,10 +420,12 @@ module satoshi::coin_flip {
             let player_rewards = stake(game);
             let coin = coin::take(&mut game.stake, player_rewards, ctx);
             transfer::public_transfer(coin, player(game));
+            update_game_result(game, 1, ctx);
         } else {
             // Step 3.b: If house wins, then add the game stake to the house_data.house_balance (no fees are taken)
             let coin = coin::take(&mut game.stake, total_stake, ctx);
             balance::join(&mut house_data.balance, coin::into_balance(coin));
+            update_game_result(game, 2, ctx);
         };
 
         emit(Outcome {
