@@ -1,22 +1,22 @@
 [package]
 name = "desuilabs"
 version = "0.0.1"
-published-at = "0xb1e187030f3b521fe5c22452ec1308d6b1376d14c407e47d9aa8a63d451699d6"
+published-at = "0x4edaf43ada89b42ba4dee9fbf74a4dee3eb01f3cfd311d4fb2c6946f87952e51"
 
 [dependencies.Launchpad]
 git = "https://github.com/Origin-Byte/nft-protocol.git"
 subdir = "contracts/launchpad"
-rev = "v1.2.1-testnet"
+rev = "0faf8bff0c0c1ca7337c2a253dedca9ae4377894"
 
 [dependencies.NftProtocol]
 git = "https://github.com/Origin-Byte/nft-protocol.git"
 subdir = "contracts/nft_protocol"
-rev = "v1.2.1-testnet"
+rev = "0faf8bff0c0c1ca7337c2a253dedca9ae4377894"
 
 [dependencies.LiquidityLayerV1]
 git = "https://github.com/Origin-Byte/nft-protocol.git"
 subdir = "contracts/liquidity_layer_v1"
-rev = "v1.2.1-testnet"
+rev = "0faf8bff0c0c1ca7337c2a253dedca9ae4377894"
 
 [addresses]
-desuilabs = "0xb1e187030f3b521fe5c22452ec1308d6b1376d14c407e47d9aa8a63d451699d6"
+desuilabs = "0x4edaf43ada89b42ba4dee9fbf74a4dee3eb01f3cfd311d4fb2c6946f87952e51"
