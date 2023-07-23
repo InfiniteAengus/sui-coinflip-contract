@@ -284,7 +284,7 @@ module satoshi::coin_flip {
 
     /// Update result of the game object
     /// @param game: The Game object
-    fun update_game_result(game: &mut Game, player_won: u8, ctx: &mut TxContext) {
+    fun update_game_result(game: &mut Game, player_won: u8) {
         assert!(player_won == 1 || player_won == 2, EInvalidGameResult);
         game.player_won = player_won;
     }
