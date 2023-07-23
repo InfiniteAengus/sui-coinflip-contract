@@ -9,5 +9,5 @@ local = "./deps/suifrens"
 local = "./deps/desuilabs" 
 
 [addresses]
-satoshi_flip=  "0x0"
+satoshi=  "0x0"
 sui =  "0x2"
