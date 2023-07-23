@@ -420,12 +420,12 @@ module satoshi::coin_flip {
             let player_rewards = stake(game);
             let coin = coin::take(&mut game.stake, player_rewards, ctx);
             transfer::public_transfer(coin, player(game));
-            update_game_result(game, 1, ctx);
+            update_game_result(game, 1);
         } else {
             // Step 3.b: If house wins, then add the game stake to the house_data.house_balance (no fees are taken)
             let coin = coin::take(&mut game.stake, total_stake, ctx);
             balance::join(&mut house_data.balance, coin::into_balance(coin));
-            update_game_result(game, 2, ctx);
+            update_game_result(game, 2);
         };
 
         emit(Outcome {
